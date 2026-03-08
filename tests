@@ -1,0 +1,158 @@
+# test_main.py
+from fastapi.testclient import TestClient
+from main import app
+from datetime import date
+import pytest
+
+client = TestClient(app)
+
+def setup_module(module):
+    """Очистка баз данных перед тестами"""
+    from main import authors_db, books_db, readers_db
+    authors_db.clear()
+    books_db.clear()
+    readers_db.clear()
+
+# Тесты для Author
+def test_create_author():
+    response = client.post("/api/authors", json={
+        "name": "Лев Толстой",
+        "birth_date": "1828-09-09",
+        "country": "Россия"
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["author"]["name"] == "Лев Толстой"
+    assert data["author"]["id"] == 1
+
+def test_get_authors():
+    response = client.get("/api/authors")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["list"]) == 1
+
+def test_get_author():
+    response = client.get("/api/authors/1")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["author"]["name"] == "Лев Толстой"
+
+def test_get_nonexistent_author():
+    response = client.get("/api/authors/999")
+    assert response.status_code == 404
+
+def test_update_author():
+    response = client.patch("/api/authors/1", json={
+        "name": "Л.Н. Толстой",
+        "birth_date": "1828-09-09",
+        "country": "Российская империя"
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["author"]["name"] == "Л.Н. Толстой"
+
+def test_delete_author():
+    response = client.delete("/api/authors/1")
+    assert response.status_code == 202
+
+# Тесты для Book
+def test_create_book_with_nonexistent_author():
+    response = client.post("/api/books", json={
+        "title": "Война и мир",
+        "author_id": 999,
+        "year": 1869,
+        "genre": "Роман",
+        "is_available": True
+    })
+    assert response.status_code == 400
+    data = response.json()
+    assert data["detail"]["reason"] == "Author does not exist"
+
+def test_create_book():
+    # Сначала создаем автора
+    client.post("/api/authors", json={
+        "name": "Ф.М. Достоевский",
+        "birth_date": "1821-11-11",
+        "country": "Россия"
+    })
+    
+    response = client.post("/api/books", json={
+        "title": "Преступление и наказание",
+        "author_id": 2,
+        "year": 1866,
+        "genre": "Роман",
+        "is_available": True
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["book"]["title"] == "Преступление и наказание"
+    assert data["book"]["id"] == 1
+
+def test_invalid_book_year():
+    response = client.post("/api/books", json={
+        "title": "Неверная книга",
+        "author_id": 2,
+        "year": 3000,
+        "genre": "Фантастика",
+        "is_available": True
+    })
+    assert response.status_code == 422  # Validation error
+
+# Тесты для Reader
+def test_create_reader():
+    response = client.post("/api/readers", json={
+        "name": "Иван Петров",
+        "email": "ivan@example.com",
+        "books_taken": []
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["reader"]["name"] == "Иван Петров"
+    assert data["reader"]["email"] == "ivan@example.com"
+
+def test_create_reader_invalid_email():
+    response = client.post("/api/readers", json={
+        "name": "Петр Сидоров",
+        "email": "invalid-email",
+        "books_taken": []
+    })
+    assert response.status_code == 422  # Validation error
+
+def test_get_readers():
+    response = client.get("/api/readers")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["list"]) == 1
+
+def test_update_reader():
+    response = client.patch("/api/readers/1", json={
+        "name": "Иван Иванов",
+        "email": "ivan_new@example.com",
+        "books_taken": [1]
+    })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["reader"]["name"] == "Иван Иванов"
+    assert data["reader"]["email"] == "ivan_new@example.com"
+
+def test_delete_reader():
+    response = client.delete("/api/readers/1")
+    assert response.status_code == 202
+    
+    # Проверяем, что читатель удален
+    response = client.get("/api/readers/1")
+    assert response.status_code == 404
+
+# Тест на ошибку 500
+def test_internal_server_error(monkeypatch):
+    def mock_get(*args, **kwargs):
+        raise Exception("Internal test error")
+    
+    monkeypatch.setattr("main.authors_db.get", mock_get)
+    response = client.get("/api/authors/999")
+    assert response.status_code == 500
+    data = response.json()
+    assert "reason" in data["detail"]
+
+if __name__ == "__main__":
+    pytest.main(["-v", "test_main.py"])
