@@ -1,0 +1,254 @@
+# main.py
+from fastapi import FastAPI, HTTPException, status
+from pydantic import BaseModel, Field, validator
+from typing import List, Optional
+from datetime import date, datetime
+import uvicorn
+
+app = FastAPI(title="Library Management API")
+
+# Модели Pydantic для валидации
+class Author(BaseModel):
+    id: int
+    name: str = Field(..., max_length=100)
+    birth_date: date
+    country: str = Field(..., max_length=50)
+
+class AuthorCreate(BaseModel):
+    name: str = Field(..., max_length=100)
+    birth_date: date
+    country: str = Field(..., max_length=50)
+
+class Book(BaseModel):
+    id: int
+    title: str = Field(..., max_length=200)
+    author_id: int
+    year: int
+    genre: str = Field(..., max_length=50)
+    is_available: bool = True
+
+    @validator('year')
+    def validate_year(cls, v):
+        if v < 1000 or v > 2024:
+            raise ValueError('Year must be between 1000 and 2024')
+        return v
+
+class BookCreate(BaseModel):
+    title: str = Field(..., max_length=200)
+    author_id: int
+    year: int
+    genre: str = Field(..., max_length=50)
+    is_available: bool = True
+
+class Reader(BaseModel):
+    id: int
+    name: str = Field(..., max_length=100)
+    registration_date: date
+    email: str
+    books_taken: List[int] = []
+
+    @validator('email')
+    def validate_email(cls, v):
+        if '@' not in v:
+            raise ValueError('Invalid email format')
+        return v
+
+class ReaderCreate(BaseModel):
+    name: str = Field(..., max_length=100)
+    email: str
+    books_taken: List[int] = []
+
+# Базы данных (в памяти для простоты)
+authors_db = {}
+books_db = {}
+readers_db = {}
+author_counter = 1
+book_counter = 1
+reader_counter = 1
+
+# ========== AUTHOR ENDPOINTS ==========
+@app.get("/api/authors", status_code=status.HTTP_200_OK)
+async def get_authors():
+    return {"list": list(authors_db.values())}
+
+@app.get("/api/authors/{author_id}", status_code=status.HTTP_200_OK)
+async def get_author(author_id: int):
+    if author_id not in authors_db:
+        raise HTTPException(status_code=404, detail="Author not found")
+    return {"author": authors_db[author_id]}
+
+@app.post("/api/authors", status_code=status.HTTP_200_OK)
+async def create_author(author: AuthorCreate):
+    global author_counter
+    try:
+        new_author = Author(id=author_counter, **author.dict())
+        authors_db[author_counter] = new_author
+        author_counter += 1
+        return {"author": new_author}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"status": 500, "reason": str(e)}
+        )
+
+@app.patch("/api/authors/{author_id}", status_code=status.HTTP_200_OK)
+async def update_author(author_id: int, author_update: AuthorCreate):
+    if author_id not in authors_db:
+        raise HTTPException(status_code=404, detail="Author not found")
+    
+    try:
+        updated_author = Author(id=author_id, **author_update.dict())
+        authors_db[author_id] = updated_author
+        return {"author": updated_author}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"status": 500, "reason": str(e)}
+        )
+
+@app.delete("/api/authors/{author_id}", status_code=status.HTTP_202_ACCEPTED)
+async def delete_author(author_id: int):
+    if author_id not in authors_db:
+        raise HTTPException(status_code=404, detail="Author not found")
+    try:
+        del authors_db[author_id]
+        return {"status": "accepted"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"status": 500, "reason": str(e)}
+        )
+
+# ========== BOOK ENDPOINTS ==========
+@app.get("/api/books", status_code=status.HTTP_200_OK)
+async def get_books():
+    return {"list": list(books_db.values())}
+
+@app.get("/api/books/{book_id}", status_code=status.HTTP_200_OK)
+async def get_book(book_id: int):
+    if book_id not in books_db:
+        raise HTTPException(status_code=404, detail="Book not found")
+    return {"book": books_db[book_id]}
+
+@app.post("/api/books", status_code=status.HTTP_200_OK)
+async def create_book(book: BookCreate):
+    global book_counter
+    try:
+        # Проверка существования автора
+        if book.author_id not in authors_db:
+            raise HTTPException(
+                status_code=400,
+                detail={"status": 400, "reason": "Author does not exist"}
+            )
+        
+        new_book = Book(id=book_counter, **book.dict())
+        books_db[book_counter] = new_book
+        book_counter += 1
+        return {"book": new_book}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"status": 500, "reason": str(e)}
+        )
+
+@app.patch("/api/books/{book_id}", status_code=status.HTTP_200_OK)
+async def update_book(book_id: int, book_update: BookCreate):
+    if book_id not in books_db:
+        raise HTTPException(status_code=404, detail="Book not found")
+    
+    try:
+        if book_update.author_id not in authors_db:
+            raise HTTPException(
+                status_code=400,
+                detail={"status": 400, "reason": "Author does not exist"}
+            )
+        
+        updated_book = Book(id=book_id, **book_update.dict())
+        books_db[book_id] = updated_book
+        return {"book": updated_book}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"status": 500, "reason": str(e)}
+        )
+
+@app.delete("/api/books/{book_id}", status_code=status.HTTP_202_ACCEPTED)
+async def delete_book(book_id: int):
+    if book_id not in books_db:
+        raise HTTPException(status_code=404, detail="Book not found")
+    try:
+        del books_db[book_id]
+        return {"status": "accepted"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"status": 500, "reason": str(e)}
+        )
+
+# ========== READER ENDPOINTS ==========
+@app.get("/api/readers", status_code=status.HTTP_200_OK)
+async def get_readers():
+    return {"list": list(readers_db.values())}
+
+@app.get("/api/readers/{reader_id}", status_code=status.HTTP_200_OK)
+async def get_reader(reader_id: int):
+    if reader_id not in readers_db:
+        raise HTTPException(status_code=404, detail="Reader not found")
+    return {"reader": readers_db[reader_id]}
+
+@app.post("/api/readers", status_code=status.HTTP_200_OK)
+async def create_reader(reader: ReaderCreate):
+    global reader_counter
+    try:
+        new_reader = Reader(
+            id=reader_counter,
+            registration_date=date.today(),
+            **reader.dict()
+        )
+        readers_db[reader_counter] = new_reader
+        reader_counter += 1
+        return {"reader": new_reader}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"status": 500, "reason": str(e)}
+        )
+
+@app.patch("/api/readers/{reader_id}", status_code=status.HTTP_200_OK)
+async def update_reader(reader_id: int, reader_update: ReaderCreate):
+    if reader_id not in readers_db:
+        raise HTTPException(status_code=404, detail="Reader not found")
+    
+    try:
+        updated_reader = Reader(
+            id=reader_id,
+            registration_date=readers_db[reader_id].registration_date,
+            **reader_update.dict()
+        )
+        readers_db[reader_id] = updated_reader
+        return {"reader": updated_reader}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"status": 500, "reason": str(e)}
+        )
+
+@app.delete("/api/readers/{reader_id}", status_code=status.HTTP_202_ACCEPTED)
+async def delete_reader(reader_id: int):
+    if reader_id not in readers_db:
+        raise HTTPException(status_code=404, detail="Reader not found")
+    try:
+        del readers_db[reader_id]
+        return {"status": "accepted"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"status": 500, "reason": str(e)}
+        )
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
